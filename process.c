@@ -16,28 +16,58 @@ typedef struct{
     char **args;
 
 } Params;
+
+
+char *str_join(char *delimiter, char *words[], int count){
+	size_t delimiter_length = strlen(delimiter);
+	size_t total_length = 0;
+        int delimiter_count = count  - 1;	
+	for(int i = 0; i < count; i++){
+		total_length += strlen(words[i]);
+	}
+	printf("\nTotal length: %i\n", total_length);
+	printf("\nDelimiter length: %i\n", delimiter_length);
+
+	total_length = total_length + (delimiter_length*delimiter_count)+1;
+	printf("\nCount: %i\n", count);
+	printf("\nTotal length with delimiters: %li\n", total_length);
+
+	char *result =(char *) malloc(total_length);
+	if(result == NULL){
+		perror("Memory allocation error");
+		exit(1);
+	}
+	result[0] = '\0';
+	for(int i = 0; i < count; i++){
+		strcat(result, words[i]);
+		if(i < count-1){
+			strcat(result, delimiter);
+		}
+	}
+	printf("\nResult: %s\n", result);
+	return result;
+}
+
 void parse_args(int argc, char **argv, Params *params){
     if(argc == 1){
         params->argc = 0;
         params->args = malloc(sizeof(char *));
-        params->args[0] = NULL;
         return;
     }
 	printf("\nargc: %i\n", argc);
  	for(int i = 0; i < argc; i++){
 	 printf("\nargv[%d]: %s\n",i, argv[i]);
 	}	
-       params->argc = argc;
-       params->args = malloc((params->argc+2) * sizeof(char *));
+       params->argc = argc-1;
+       params->args = malloc((params->argc) * sizeof(char *));
        if(params->args == NULL){
            perror("Memory allocation failed");
            exit(1);
        }
-       for (int i = 0; i < argc-1; i++){
+       for (int i = 0; i < params->argc; i++){
         	params->args[i] = argv[i+1];
        }
-       params->args[argc-1] = NULL;
-       for(int i = 0; i < argc;i++){
+       for(int i = 0; i < params->argc;i++){
 	       printf("\nparams->args[%d]: %s\n", i, params->args[i]);
        }
 }
@@ -49,12 +79,18 @@ int nesquick(void *arg){
     printf("\nCommand for execution: %s\n", params->command);
     fflush(stdout);
     printf("\nChild pid: %i\n", getpid());
+
+    if(mount(NULL,  "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0){
+	    perror("MS_PRIVATE is failed");
+	    exit(1);
+    }
    umount2("/proc", MNT_DETACH); 
    usleep(100000);
    if(mount("proc", "/proc", "proc", 0, NULL ) < 0){
         printf("\nError: Mounting failed\n");
         exit(1);
    }
+   char * res = str_join(" ", params->args, params->argc);
    //char *args[params->argc+2];
    //args[0] = "/bin/bash";
    //args[1] = "-c";
@@ -72,15 +108,13 @@ int nesquick(void *arg){
         printf("\nThere are no arguments passed!\n");
         exit(1);
     }
-    char *args[params->argc+2];
-    printf("\nparams->argc+2: %d\n", params->argc+2);
+    char *args[4];
     args[0] = "/bin/bash";
     args[1] = "-c";
-    for(int i = 2; i < params->argc+2; i++){
-        args[i] = params->args[i-2];
-    }
+    args[2] = res;
+    args[3] = NULL;
     for (int i =0; i < params->argc+2; i++){
-        printf("\nargs[%d]: %s\n", i , args[i]);
+       printf("\nargs[%d]: %s\n", i , args[i]);
     }
     execv((char *const)args[0], (char *const *)args);
     perror("Execution failed");
