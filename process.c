@@ -79,7 +79,7 @@ int nesquick(void *arg){
     printf("\nCommand for execution: %s\n", params->command);
     fflush(stdout);
     printf("\nChild pid: %i\n", getpid());
-
+    //Вот тут решение общего mount, получается что проблема была в том, что он до этого был share, короче, теперь в новом mount namespace он приватный, из за чего это не касается общего хоста
     if(mount(NULL,  "/", NULL, MS_REC | MS_PRIVATE, NULL) < 0){
 	    perror("MS_PRIVATE is failed");
 	    exit(1);
