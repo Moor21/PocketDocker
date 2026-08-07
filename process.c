@@ -19,7 +19,17 @@ typedef struct{
 
 
 char *str_join(char *delimiter, char *words[], int count){
-	size_t delimiter_length = strlen(delimiter);
+    if(count <= 0){
+        printf("\nCount is not allowed!\n");
+        char *result = malloc(sizeof(char *));
+        if(result == NULL){
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        result[0] = '\0';
+        return result;
+    }
+    size_t delimiter_length = strlen(delimiter);
 	size_t total_length = 0;
         int delimiter_count = count  - 1;	
 	for(int i = 0; i < count; i++){
@@ -85,11 +95,14 @@ int nesquick(void *arg){
 	    exit(1);
     }
    umount2("/proc", MNT_DETACH); 
-   usleep(100000);
    if(mount("proc", "/proc", "proc", 0, NULL ) < 0){
         printf("\nError: Mounting failed\n");
         exit(1);
    }
+    if(params->argc == 0){
+        printf("\nThere are no arguments passed!\n");
+        exit(1);
+    }
    char * res = str_join(" ", params->args, params->argc);
    //char *args[params->argc+2];
    //args[0] = "/bin/bash";
@@ -104,16 +117,13 @@ int nesquick(void *arg){
   //  execv( (char const *)args[0], (char * const *)args);
    // perror("Execution failed");
  //   exit(EXIT_FAILURE);
-    if(params->argc == 0){
-        printf("\nThere are no arguments passed!\n");
-        exit(1);
-    }
+
     char *args[4];
     args[0] = "/bin/bash";
     args[1] = "-c";
     args[2] = res;
     args[3] = NULL;
-    for (int i =0; i < params->argc+2; i++){
+    for (int i =0; i < 4; i++){
        printf("\nargs[%d]: %s\n", i , args[i]);
     }
     execv((char *const)args[0], (char *const *)args);
@@ -143,11 +153,17 @@ int main(int argc, char **argv){
        printf("\nClone error\n");
        exit(1);
    }
-   if(waitpid(nesquick_pid, NULL, 0) == -1){
+   int status;
+   if(waitpid(nesquick_pid, &status, 0) == -1){
        printf("\nChild has terminated\n");
        free(nesquick_stack);
        exit(0);
    }
+   if (WIFEXITED(status)) {
+    printf("Child exited with status %d\n", WEXITSTATUS(status));
+} else if (WIFSIGNALED(status)) {
+    printf("Child killed by signal %d\n", WTERMSIG(status));
+}
     free(nesquick_stack);
     return 0;
 
