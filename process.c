@@ -8,6 +8,9 @@
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <sys/mount.h>
+#include <pty.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #define STACK_SIZE (1024*1024)
 typedef struct{
     int fd[2];
@@ -69,7 +72,7 @@ void parse_args(int argc, char **argv, Params *params){
 	 printf("\nargv[%d]: %s\n",i, argv[i]);
 	}	
        params->argc = argc-1;
-       params->args = malloc((params->argc) * sizeof(char *));
+       params->args = calloc((size_t)params->argc+2, sizeof(*params->args));
        if(params->args == NULL){
            perror("Memory allocation failed");
            exit(1);
@@ -77,14 +80,18 @@ void parse_args(int argc, char **argv, Params *params){
        for (int i = 0; i < params->argc; i++){
         	params->args[i] = argv[i+1];
        }
-       for(int i = 0; i < params->argc;i++){
+       params->args[params->argc] = NULL;
+       for(int i = 0; i < params->argc+1;i++){
 	       printf("\nparams->args[%d]: %s\n", i, params->args[i]);
        }
 }
+
 int nesquick(void *arg){
+    
     if(prctl(PR_SET_PDEATHSIG, SIGKILL)){
         exit(1);
     }
+    setsid();
     Params *params = (Params *)arg;
     printf("\nCommand for execution: %s\n", params->command);
     fflush(stdout);
@@ -103,30 +110,32 @@ int nesquick(void *arg){
         printf("\nThere are no arguments passed!\n");
         exit(1);
     }
-   char * res = str_join(" ", params->args, params->argc);
-   //char *args[params->argc+2];
-   //args[0] = "/bin/bash";
-   //args[1] = "-c";
-   // for (int i = 0; i < params->argc; i++){
-   //     args[i+2] = params->args[i];
-   // }
-   // for (int i = 0; i < params->argc+2; i++){
-    //    printf("\nargs[%i]: %s\n",i, args[i]);
-    //}
-  //  char const *args[] = { "/bin/bash", "-c","ls","-la", NULL };
-  //  execv( (char const *)args[0], (char * const *)args);
-   // perror("Execution failed");
- //   exit(EXIT_FAILURE);
+	//pty
+	int pty_master;
+	int pty_slave;
+	if(openpty(&pty_master, &pty_slave, NULL, NULL, NULL) < 0){
+		perror("openpty:");
+		exit(-1);
+	}
+	
+	char *pty_name = ttyname(pty_slave);
+	printf("\npty_master: %i\n", pty_master);
+	printf("\npty_slave: %i\n", pty_slave);
+	printf("\npty_slave_name: %s\n", pty_name);
 
-    char *args[4];
-    args[0] = "/bin/bash";
-    args[1] = "-c";
-    args[2] = res;
-    args[3] = NULL;
-    for (int i =0; i < 4; i++){
-       printf("\nargs[%d]: %s\n", i , args[i]);
-    }
-    execv((char *const)args[0], (char *const *)args);
+	//making pty controlling terminal for the process
+   	 #ifdef TIOCSCTTY
+   	 ioctl(pty_slave, TIOCSCTTY, 0);
+   	 #endif
+	
+	 dup2(pty_slave, STDIN_FILENO);
+	 dup2(pty_slave, STDOUT_FILENO);
+	 dup2(pty_slave, STDERR_FILENO);
+	 
+	 if(pty_slave > 2){
+		 close(pty_slave);
+	 }
+    execvp((char *const)params->args[0], (char *const *)params->args);
     perror("Execution failed");
     exit(EXIT_FAILURE);    
     return 1;
@@ -157,6 +166,7 @@ int main(int argc, char **argv){
    if(waitpid(nesquick_pid, &status, 0) == -1){
        printf("\nChild has terminated\n");
        free(nesquick_stack);
+       free(params.args);
        exit(0);
    }
    if (WIFEXITED(status)) {
@@ -165,6 +175,7 @@ int main(int argc, char **argv){
     printf("Child killed by signal %d\n", WTERMSIG(status));
 }
     free(nesquick_stack);
+    free(params.args);
     return 0;
 
 }
