@@ -16,6 +16,8 @@ typedef struct{
     int fd[2];
     char *command;
     int argc;
+    int *pty_master;
+    int *pty_slave;
     char **args;
 
 } Params;
@@ -110,6 +112,9 @@ int nesquick(void *arg){
         printf("\nThere are no arguments passed!\n");
         exit(1);
     }
+    //parent pty
+    printf("\nParent pty_master: %li\n", *(params->pty_master));
+    printf("\nParent pty_slave: %li\n", *(params->pty_slave));
 	//pty
 	int pty_master;
 	int pty_slave;
@@ -154,6 +159,13 @@ int main(int argc, char **argv){
    if(nesquick_stack == NULL){
        printf("\nMemory allocation error\n");
        exit(1);
+   }
+   //pty
+   params.pty_master = malloc(sizeof(int));
+   params.pty_slave = malloc(sizeof(int));
+   if(openpty(params.pty_master, params.pty_slave, NULL, NULL, NULL) < 0){
+       perror("openpty");
+       exit(-1);
    }
    char *nesquick_stack_top = nesquick_stack + STACK_SIZE;
    int flags = CLONE_NEWPID | SIGCHLD | CLONE_NEWNS;
