@@ -11,6 +11,8 @@
 #include <pty.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/epoll.h>
+#define MAX_EVENTS 10
 #define STACK_SIZE (1024*1024)
 typedef struct{
     int fd[2];
@@ -115,30 +117,23 @@ int nesquick(void *arg){
     //parent pty
     printf("\nParent pty_master: %li\n", *(params->pty_master));
     printf("\nParent pty_slave: %li\n", *(params->pty_slave));
-	//pty
-	int pty_master;
-	int pty_slave;
-	if(openpty(&pty_master, &pty_slave, NULL, NULL, NULL) < 0){
-		perror("openpty:");
-		exit(-1);
-	}
-	
-	char *pty_name = ttyname(pty_slave);
-	printf("\npty_master: %i\n", pty_master);
-	printf("\npty_slave: %i\n", pty_slave);
+
+	char *pty_name = ttyname(*(params->pty_slave));
+	printf("\npty_master: %i\n", *(params->pty_master));
+	printf("\npty_slave: %i\n", *(params->pty_slave));
 	printf("\npty_slave_name: %s\n", pty_name);
 
 	//making pty controlling terminal for the process
    	 #ifdef TIOCSCTTY
-   	 ioctl(pty_slave, TIOCSCTTY, 0);
+   	 ioctl(*(params->pty_slave), TIOCSCTTY, 0);
    	 #endif
 	
-	 dup2(pty_slave, STDIN_FILENO);
-	 dup2(pty_slave, STDOUT_FILENO);
-	 dup2(pty_slave, STDERR_FILENO);
+	 dup2(*(params->pty_slave), STDIN_FILENO);
+	 dup2(*(params->pty_slave), STDOUT_FILENO);
+	 dup2(*(params->pty_slave), STDERR_FILENO);
 	 
-	 if(pty_slave > 2){
-		 close(pty_slave);
+	 if(*(params->pty_slave) > 2){
+		 close(*(params->pty_slave));
 	 }
     execvp((char *const)params->args[0], (char *const *)params->args);
     perror("Execution failed");
@@ -175,19 +170,63 @@ int main(int argc, char **argv){
        exit(1);
    }
    int status;
-   if(waitpid(nesquick_pid, &status, 0) == -1){
-       printf("\nChild has terminated\n");
-       free(nesquick_stack);
-       free(params.args);
-       exit(0);
-   }
-   if (WIFEXITED(status)) {
-    printf("Child exited with status %d\n", WEXITSTATUS(status));
+   //pty read and write
+       //epoll
+       close(*(params.pty_slave));
+       int epfd, nfds;
+       struct epoll_event ev, events[MAX_EVENTS];
+       epfd = epoll_create(1);
+       if(epfd < 0){
+	       perror("epoll");
+	       exit(-1);
+       }
+       char pty_buffer[4096] = {0};
+       ssize_t bytes_read;
+	
+       ev.events = EPOLLIN;
+       ev.data.fd = *(params.pty_master);
+       if(epoll_ctl(epfd, EPOLL_CTL_ADD, *(params.pty_master), &ev)<0){
+	       perror("epoll_ctl");
+	       exit(-1);
+       }
+
+	while(1){
+
+		nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+		if(nfds < 0){
+			perror("nfds");
+			exit(-1);
+		}
+		for(int n = 0; n < nfds; n++){
+			if(events[n].data.fd == *(params.pty_master)){
+				printf("\nSomething arrived!\n");
+				while((bytes_read = read(*(params.pty_master), pty_buffer, 4096-1))>0){
+					pty_buffer[bytes_read] = '\0';
+					printf("\npty_buffer: %s\n", pty_buffer);
+			}
+			 if(bytes_read < 0){
+				 perror("pty read");
+				 close(*(params.pty_master));
+				 exit(-1);
+			 }
+				 printf("\nend\n");
+				 
+		   if(waitpid(nesquick_pid, &status, 0) == -1){
+      			 printf("\nChild has terminated\n");
+       			 free(nesquick_stack);
+       		         free(params.args);
+       			 exit(0);
+  			 }
+  		   if (WIFEXITED(status)) {
+   			 printf("Child exited with status %d\n", WEXITSTATUS(status));
 } else if (WIFSIGNALED(status)) {
-    printf("Child killed by signal %d\n", WTERMSIG(status));
+   			 printf("Child killed by signal %d\n", WTERMSIG(status));
 }
+		
+	}
     free(nesquick_stack);
     free(params.args);
     return 0;
 
-}
+	}
+}}
