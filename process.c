@@ -13,9 +13,12 @@
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <termios.h>
 #define MAX_EVENTS 10
 #define PTY_BUFFER_SIZE 1024
 #define STACK_SIZE (1024 * 1024)
+#define ROOT_PATH "/home/nesquick/Documents/nesquickProjectsInC/PocketDocker/container_rootfs"
+
 typedef struct {
   int fd[2];
   char *command;
@@ -101,6 +104,7 @@ int nesquick(void *arg) {
   printf("\nCommand for execution: %s\n", params->command);
   fflush(stdout);
   printf("\nChild pid: %i\n", getpid());
+
   // Вот тут решение общего mount, получается что проблема была в том, что он до
   // этого был share, короче, теперь в новом mount namespace он приватный, из за
   // чего это не касается общего хоста
@@ -108,8 +112,13 @@ int nesquick(void *arg) {
     perror("MS_PRIVATE is failed");
     exit(1);
   }
-  umount2("/proc", MNT_DETACH);
-  if (mount("proc", "/proc", "proc", 0, NULL) < 0) {
+    //CHANGING WORKING DIRECTORY chdir
+  if(chdir(ROOT_PATH) < 0){
+      perror("chdir");
+      exit(-1);
+  }
+
+  if (mount("proc", "proc", "proc", 0, NULL) < 0) {
     printf("\nError: Mounting failed\n");
     exit(1);
   }
@@ -138,6 +147,16 @@ int nesquick(void *arg) {
   if (*(params->pty_slave) > 2) {
     close(*(params->pty_slave));
   }
+    //CHANGING ROOT DIRECTORY chroot
+  if(chroot(".") < 0){
+      perror("chroot");
+      exit(-1);
+  }
+  //UPDATING WORKING DIRECTORY chdir
+  if(chdir("/") < 0){
+      perror("chdir 2");
+      exit(-1);
+  }
   execvp((char *const)params->args[0], (char *const *)params->args);
   perror("Execution failed");
   exit(EXIT_FAILURE);
@@ -152,6 +171,7 @@ int main(int argc, char **argv) {
     printf("\nFailed to create PIPE!\n");
     exit(1);
   }
+  //child process (nesquick) stack preparing
   parse_args(argc, argv, &params);
   char *nesquick_stack = malloc(STACK_SIZE);
   if (nesquick_stack == NULL) {
@@ -171,6 +191,7 @@ int main(int argc, char **argv) {
     perror("flags");
     exit(-1);
   }
+  //non block pty
   pty_flags = pty_flags | O_NONBLOCK;
   if (fcntl(*(params.pty_master), F_SETFL, pty_flags) < 0) {
     perror("NONBLOCK");
@@ -186,7 +207,7 @@ int main(int argc, char **argv) {
     perror("STDIN NONBLOCK");
     exit(-1);
   }
-
+  //clone
   char *nesquick_stack_top = nesquick_stack + STACK_SIZE;
   int flags = CLONE_NEWPID | SIGCHLD | CLONE_NEWNS;
   pid_t nesquick_pid = clone(nesquick, nesquick_stack_top, flags, &params);
@@ -205,12 +226,12 @@ int main(int argc, char **argv) {
     perror("epoll");
     exit(-1);
   }
-
+  //buffers
   char pty_buffer[PTY_BUFFER_SIZE] = {0};
   ssize_t bytes_read;
 
  
-
+  
   ev.events = EPOLLIN;
   ev.data.fd = *(params.pty_master);
 
@@ -225,6 +246,16 @@ int main(int argc, char **argv) {
     perror("epoll_ctl STDIN");
     exit(-1);
   }
+
+  //switch terminal mode to raw 
+  struct termios orig_termios;
+  tcgetattr(STDIN_FILENO, &orig_termios);
+
+  struct termios raw = orig_termios;
+  cfmakeraw(&raw);
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+
+
   while (1) {
     pid_t pid;
     pid = waitpid(nesquick_pid, &status, WNOHANG);
@@ -243,6 +274,7 @@ int main(int argc, char **argv) {
       }
       break;
     } else if (pid == 0) {
+      //if child is still working epoll logic 
       nfds = epoll_wait(epfd, events, MAX_EVENTS, 100);
       if (nfds < 0) {
         perror("nfds");
@@ -250,7 +282,7 @@ int main(int argc, char **argv) {
       }
       for (int n = 0; n < nfds; n++) {
         if (events[n].data.fd == *(params.pty_master)) {
-          printf("\nReady!\n");
+          //reading from the master and sending to the parent's pty  
           bytes_read =
               read(*(params.pty_master), pty_buffer, PTY_BUFFER_SIZE);
           if (bytes_read > 0) {
@@ -264,11 +296,10 @@ int main(int argc, char **argv) {
                     }
                 
                  }
-                 perror("read: ");
               }
 
         } else if (events[n].data.fd == STDIN_FILENO) {
-          printf("\nSTDIN is ready!\n");
+          //input - reading from the parent's pty and writing to the child's pty (master)
           char std_buffer[PTY_BUFFER_SIZE];
           ssize_t n = read(STDIN_FILENO, std_buffer, PTY_BUFFER_SIZE);
           if (n>0){
@@ -289,7 +320,7 @@ int main(int argc, char **argv) {
       }
     }
   }
-
+  //memory allocation
   free(nesquick_stack);
   free(params.args);
   return 0;
